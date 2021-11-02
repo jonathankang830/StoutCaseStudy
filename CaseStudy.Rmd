@@ -1,0 +1,432 @@
+---
+title: "CaseStudy"
+author: "Jonathan Kang"
+date: "10/30/2021"
+output: html_document
+---
+
+## Case Study 1
+
+
+```{r libraries, echo = FALSE}
+library(tidyverse)
+library(tidyr)
+library(readr)
+library(dplyr)
+library(faraway)
+library(lmtest)
+library(MASS)
+library(ggplot2)
+library(plotly)
+library(leaps)
+```
+
+
+### Describe the dataset and any issues with it.  
+
+```{r}
+loans_full_schema <- read.csv("~/Downloads/loans_full_schema.csv")
+
+str(loans_full_schema)
+summary(loans_full_schema)
+```
+
+  This dataset contains information about the loans made in a Lending Club platform, regarding multiple factors such as income, interest rate, and so on. Other than quantitative data, there is also categorical data included in this data, such as loan purpose, status, and others. One large issue with the given dataset is the large amount of NA or empty cells. If we do have to perform data analysis later on, we may need to choose which predictors we will need to use and how we should deal with the NA cells. 
+  
+  
+
+### Generate a minimum of 5 unique visualizations using the data and write a brief description of your observations.  
+All attempts should be made to make the visualizations visually appealing
+
+```{r}
+#scatter
+plot(loans_full_schema$annual_income, loans_full_schema$debt_to_income, main = "Annual Income vs Debt to Income")
+
+#density
+ggplot(loans_full_schema, aes(loan_amount, interest_rate)) + geom_density_2d_filled()
+
+#scatter different shapes
+ggplot(loans_full_schema,aes(balance, paid_total, shape = disbursement_method)) +
+  geom_point(aes(colour  =  disbursement_method), size  =  1) + geom_point(colour  =  "grey90", size  =  0.5)
+
+#high density
+plot(loans_full_schema$annual_income, type= "h")
+
+#boxplot
+boxplot(loans_full_schema[,52:53], main='Multiple Box plots')
+
+#horizontal plot
+hist(loans_full_schema$emp_length, main = "Number of years in job")
+```
+
+1) This is a scatterplot that shows the relationship between a person's annual income and the debt he or she has with the income. Most points are situated between 0-500000 annual income dollars and under 200 debt. There are a few outliers after 1000000 annual income.
+
+
+2) This is a density plot that compares loan amount and interest rate, with the level showing where most of the points are situated at.
+
+
+3) This is a scatterplot with the shapes grouping the disbursement method comparing balance and the total debt paid.
+
+
+4) This is a bar plot that shows the general size of the annual income of this dataset. We can see that while there are a few outstanding lines, most seem to fall in a similar range
+
+
+5) This is a box plot that aims to show the total debt paid and the difference between paid and current balance. We can see that there are many outlying points for both plots, telling us that the data is skewed heavily.
+
+
+6) This is a histogram that shows how frequent the number of years per job people in this dataset have worked in. From the histogram, we can see that majority of the people at least 10 years of working experience.
+
+
+
+
+
+### Create a feature set and create a model which predicts interest rate using at least 2 algorithms.  
+Describe any data cleansing that must be performed and analysis when examining the data.
+
+```{r}
+loans_schema <- loans_full_schema %>%
+  na.omit() %>%
+  mutate(disbursement_method = if_else(disbursement_method == "Cash", 0, 1)) %>%
+  mutate(initial_listing_status = if_else(initial_listing_status == "whole", 1, 0)) %>%
+  select(-emp_title, -state, -homeownership, -verified_income, -verification_income_joint, -loan_purpose, -application_type, -grade, -sub_grade, -issue_month, -loan_status, -disbursement_method, -initial_listing_status, -current_accounts_delinq, -num_accounts_120d_past_due, -num_accounts_30d_past_due, -public_record_bankrupt, -paid_principal)
+
+loans.full <- lm(interest_rate~., data = loans_schema)
+
+summary(loans.full) 
+step(loans.full, direction="both")
+
+
+loans.reduced <- lm(formula = interest_rate ~ emp_length + annual_income + debt_to_income + 
+    annual_income_joint + months_since_last_delinq + earliest_credit_line + 
+    num_collections_last_12m + months_since_last_credit_inquiry + 
+    num_active_debit_accounts + total_debit_limit + num_mort_accounts + 
+    tax_liens + loan_amount + term + installment + balance + 
+    paid_total, data = loans_schema)
+
+summary(loans.reduced)
+
+anova(loans.reduced, loans.full)
+```
+
+First, omit all the NA values of the dataset and remove the categorical columns of this data. 
+Next, we will perform a step function for model selection. This utilizes AIC to determine which values can be removed and added to the model. 
+After model selection, we can verify this result using a partial F-test. Since p-value is larger than alpha=0.05, we can say that we lack significant evidence to conclude the reduced model removed significant variables from the full model. This means that our reduced model is a viable model to proceed.
+
+
+### Visualize the test results and propose enhancements to the model, what would you do if you had more time. Also describe assumptions you made and your approach.
+
+Next, we will proceed with the diagnostics and transformations.
+
+```{r}
+# sample size
+n=dim(loans_schema)[1]
+p=10
+
+# Compute Leverages
+lev=influence(loans.reduced)$hat
+
+# Determine which exceed the 2p/n threshold
+newlev = lev[lev>2*p/n]
+length(newlev)/n
+
+# Half-normal plot 
+halfnorm(lev, 10, labs=as.character(1:length(newlev)), ylab="Leverages")
+```
+
+By the plot, we can conclude that there are some high leverage points. However, these are not bad leverage points. Hence, we do not have any outlying influential points.
+
+```{r}
+# Compute Studentized Residuals
+jack=rstudent(loans.reduced); 
+
+# The critical value WITH Bonferroni correction is
+qt(.05/(2*n), n-p-1) 
+
+# Sort the residuals in descending order to find outliers (if any)
+sort(abs(jack), decreasing=TRUE)[1:10] 
+```
+
+By calculating the Bonferroni Correction values, we can see that none of the outliers are larger than the absolute value of the Bonferroni correction value.
+
+```{r}
+# Compute Cook's Distance
+cook = cooks.distance(loans.reduced)
+
+# Prepare a Half Normal Plot of Cook's distances
+halfnorm(cook, 10, labs=as.character(1:length(cook)), ylab="Cook's distances")
+
+#Use Cook's distance to find any influential points
+sum(cooks.distance(loans.reduced) > 1)
+```
+
+We conclude that there are no influential points according to the Cook's distance.
+
+So then, we can proceed with checking constant variance and normality assumptions:
+
+```{r}
+# Checking Constant variance assumption
+
+plot(loans.reduced, which=1)
+bptest(loans.reduced) 
+```
+
+Both the graphical check and the statistical Breusch-Pagan test indicate that the variance is likely constant. Since our Breusch-Pagan test's p-value is large, we fail to reject the null. The variance assumption is held in this data
+
+
+```{r, warning = FALSE}
+# Check for Normality Assumption
+
+plot(loans.reduced, which=2)
+hist(loans.reduced$residuals)
+ks.test(residuals(loans.reduced), y=pnorm)
+```
+
+Both graphical checks and the statistical Kolmogorov-Smirnov test indicate that the normality assumption is violated. (The plot indicates that points are not in a straight line at the edges, and KS test has a significantly low p-value so that we reject the null hypothesis saying that constant normality does not hold).
+
+
+### Remedial Attempts
+
+```{r}
+loans.transformation = boxcox(loans.reduced, lambda=seq(-2,2, length = 400))
+loans.transformation$x[loans.transformation$y == max(loans.transformation$y)]
+tmp=loans.transformation$x[loans.transformation$y > max(loans.transformation$y) - qchisq(0.95, 1)/2]
+range(tmp) #CI for lambda.
+```
+
+The optimal value of $\lambda$ is 0.5. For the Box-Cox transformation, $\hat{\lambda}$ is rounded to a nearby value. Since $0.566416$ is the estimated $\hat{\lambda}$ and $1$ and $2$ are not in our confidence interval for $\lambda$, the estimate will be rounded to 0.5.
+
+```{r}
+lambda = 0.5
+
+loans_schema_remd <- loans_schema
+
+loans_schema_remd$interest_rate_new = (loans_schema_remd$interest_rate^lambda-1)/lambda
+
+loans.reduced.new <- lm(formula = interest_rate_new ~ emp_length + annual_income + debt_to_income + 
+    annual_income_joint + months_since_last_delinq + earliest_credit_line + 
+    num_collections_last_12m + months_since_last_credit_inquiry + 
+    num_active_debit_accounts + total_debit_limit + num_mort_accounts + 
+    tax_liens + loan_amount + term + installment + balance + 
+    paid_total, data = loans_schema_remd)
+
+
+plot(loans.reduced.new, which=1)
+bptest(loans.reduced)
+
+plot(loans.reduced.new, which=2)
+hist(loans.reduced.new$residuals)
+ks.test(residuals(loans.reduced.new), y=pnorm)
+```
+
+Even with the Box-Cox transformation, the normality assumption is still violated. However, the new histogram plot of residuals is now slightly close to a normal distribution, indicating that the transformation has helped reduce the normal violations of model assumptions.
+
+
+If I had more time, I would attempt on changing and using a different method other than box cox to remedy the violations. Moreover, I would also attempt to incorporate the categorical variables too and try to create a regression model to determine and estimate the interest rates.
+
+
+
+
+
+# Case Study 2
+
+```{r}
+customer_orders <- read.csv("~/Downloads/casestudy.csv") 
+colnames(customer_orders) = c("index", "customer_email", "net_revenue", "year")
+```
+
+### Total Revenue for each year:
+
+```{r}
+total_revenue_yearly <- customer_orders %>%
+  group_by(year) %>%
+  mutate(total_revenue = sum(net_revenue)) %>%
+  dplyr::select(year, total_revenue) %>%
+  unique()
+
+total_revenue_yearly
+```
+
+### New Customer Revenue e.g., new customers not present in previous year only
+
+```{r}
+# only show the first instance of each customer
+net_rev <- distinct(customer_orders, customer_email, .keep_all = T) %>%
+  select(net_revenue)
+
+sum(net_rev)
+```
+
+### Existing Customer Growth. To calculate this, use the Revenue of existing customers for current year –(minus) Revenue of existing customers from the previous year
+
+```{r}
+total_revenue_yearly$total_revenue[2]-total_revenue_yearly$total_revenue[1]
+total_revenue_yearly$total_revenue[3]-total_revenue_yearly$total_revenue[2]
+```
+
+**Lost 3305806** from 2015 to 2016;
+**Earned 5686551** from 2016 to 2017;
+
+### Revenue lost from attrition
+
+```{r}
+# If not misunderstood, revenue lost over the entire time period
+total_revenue_yearly$total_revenue[3]-total_revenue_yearly$total_revenue[1]
+```
+
+**2380746** revenue earned over entire time period.
+
+
+### Existing Customer Revenue Current Year
+
+```{r}
+# check if customer exists previously, then check their revenue of their current year
+
+existing_customers <- duplicated(customer_orders[,2])
+existing_customers2 <- customer_orders[existing_customers,]
+
+existing_customers3 <- existing_customers2 %>%
+  group_by(year) %>%
+  mutate(total_existing_customer_rev = sum(net_revenue)) %>%
+  dplyr::select(year, total_existing_customer_rev) %>%
+  unique()
+
+existing_customers3
+```
+
+
+### Existing Customer Revenue Prior Year
+```{r}
+# check if customer exists previously, then check their revenue of their previous year
+
+
+existing_customers4 <- customer_orders %>%
+  arrange(desc(index))
+
+existing_customers5 <- duplicated(existing_customers4[,2])
+existing_customers6 <- existing_customers4[existing_customers5,]
+
+
+existing_customers7 <- existing_customers6 %>%
+  arrange(index, descending = T) %>%
+  group_by(year) %>%
+  mutate(total_existing_customer_rev = sum(net_revenue)) %>%
+  dplyr::select(year, total_existing_customer_rev) %>%
+  unique()
+
+
+existing_customers7
+
+```
+
+### Total Customers Current Year
+
+```{r}
+total_2017 <- customer_orders %>%
+  filter(year == 2017) %>%
+  distinct(customer_email, .keep_all = T) %>%
+  nrow()
+
+total_2017
+```
+
+**249987 Customers** in year 2017
+
+### Total Customers Previous Year
+
+```{r}
+total_2015 <- customer_orders %>%
+  filter(year == 2015) %>%
+  distinct(customer_email, .keep_all = T) %>%
+  nrow()
+
+total_2016 <- customer_orders %>%
+  filter(year == 2016) %>%
+  distinct(customer_email, .keep_all = T) %>%
+  nrow()
+
+c(total_2015, total_2016)
+```
+
+**231294 Customers** in year 2015
+**204646 Customers** in year 2016
+
+
+
+### New Customers
+
+```{r}
+new_2017 <- customer_orders %>%
+  filter(year == 2016 | year == 2017)
+nrow(customer_orders %>% filter(year==2017)) - nrow(new_2017[duplicated(new_2017[2]),])
+
+#total
+new_2016 <- customer_orders %>%
+  filter(year == 2015 | year == 2016)
+nrow(customer_orders %>% filter(year==2016)) - nrow(new_2017[duplicated(new_2016[2]),])
+
+
+```
+
+There were **229028** new unique customers in 2017
+There were **145062** new unique customers in 2016
+
+
+### Lost Customers
+
+```{r}
+lost_2016 <- customer_orders %>%
+  filter(year == 2015 | year == 2016) %>%
+  distinct(customer_email, .keep_all = T) %>%
+  filter(year == 2015)
+nrow(lost_2016)
+
+lost_2017 <- customer_orders %>%
+  filter(year == 2017 | year == 2016) %>%
+  distinct(customer_email, .keep_all = T) %>%
+  filter(year == 2017)
+nrow(lost_2017)
+
+```
+
+Between 2016 and 2015, **231294 Unique Customers** were lost
+Between 2017 and 2016, **229028 Unique Customers** were lost
+
+
+### Unique Observations?
+
+Question: Is there a clear trend for 2015's net_revenue?
+
+```{r}
+#summary(customer_orders)
+
+net_rev_2015 <- customer_orders %>%
+  filter(year == 2015) %>%
+  arrange(net_revenue) %>%
+  mutate(count = 1) %>%
+  dplyr::select(net_revenue, count) %>%
+  group_by(net_revenue) %>%
+  mutate(sum = sum(count)) %>%
+  dplyr::select(-count) %>%
+  unique() %>%
+  mutate(net_revenue = floor(net_revenue)) %>%
+  group_by(net_revenue) %>%
+  mutate(orders = sum(sum)) %>%
+  dplyr::select(-sum) %>%
+  unique()
+
+plot(net_rev_2015, pch = 20, col = "blue", main = "The Net Revenue for Every Order in 2015")
+
+net_rev_2015_2 <- net_rev_2015[-nrow(net_rev_2015),]
+plot(net_rev_2015_2, pch = 20, col = "blue", main = "The Net Revenue for Every Order in 2015 No Outlier") +
+  abline(lm(orders ~ net_revenue, net_rev_2015_2))
+
+```
+
+In my plots above, I am  trying to investigate if there are any outstanding points or pattern present in the net revenue for the year of 2015. In the first plot we can see that there is an outlier when the net revenue is 250, disrupting the linear model. Once we remove that value, we can see that the points of the plot are randomly scattered around our linear regression line. We can see that there is no linear trend, that the points are randomly scattered with little to no correlation.
+
+
+
+
+
+
+
